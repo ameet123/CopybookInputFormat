@@ -24,12 +24,12 @@
 		<dependency>
 			<groupId>net.sf.JRecord</groupId>
 			<artifactId>JRecord</artifactId>
-			<version>0.80</version>
+			<version>0.81.4</version>
 		</dependency>
 		<dependency>
 			<groupId>net.sf.cb2xml</groupId>
 			<artifactId>cb2xml</artifactId>
-			<version>1.0</version>
+			<version>0.95.6</version>
 		</dependency>
 		<dependency>
 			<groupId>commons-io</groupId>

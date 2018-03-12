@@ -1,18 +1,15 @@
 package com.cloudera.sa.copybook.mapreduce;
 
-import java.io.BufferedInputStream;
-import java.io.IOException;
-
+import com.cloudera.sa.copybook.Const;
 import net.sf.JRecord.Common.Constants;
 import net.sf.JRecord.Details.AbstractLine;
 import net.sf.JRecord.External.CobolCopybookLoader;
 import net.sf.JRecord.External.CopybookLoader;
-import net.sf.JRecord.External.ExternalRecord;
 import net.sf.JRecord.External.Def.ExternalField;
+import net.sf.JRecord.External.ExternalRecord;
 import net.sf.JRecord.IO.AbstractLineReader;
 import net.sf.JRecord.IO.LineIOProvider;
 import net.sf.JRecord.Numeric.Convert;
-
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.LongWritable;
@@ -22,138 +19,136 @@ import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.lib.input.FileSplit;
 
-import com.cloudera.sa.copybook.Const;
+import java.io.BufferedInputStream;
+import java.io.IOException;
 
 public class CopybookRecordReader extends RecordReader<LongWritable, Text> {
 
-  private int recordByteLength;
-  private long start;
-  private long pos;
-  private long end;
+    private int recordByteLength;
+    private long start;
+    private long pos;
+    private long end;
 
-  private LongWritable key = null;
-  private Text value = null;
+    private LongWritable key = null;
+    private Text value = null;
 
-  AbstractLineReader ret;
-  ExternalRecord externalRecord;
-  private static String fieldDelimiter = new Character((char) 0x01).toString();
-  
-  @Override
-  public void initialize(InputSplit split, TaskAttemptContext context)
-      throws IOException, InterruptedException {
+    private AbstractLineReader ret;
+    private ExternalRecord externalRecord;
+    private static String fieldDelimiter = Character.toString((char) 0x01);
 
-    String cblPath = context.getConfiguration().get(
-        Const.COPYBOOK_INPUTFORMAT_CBL_HDFS_PATH_CONF);
+    @Override
+    public void initialize(InputSplit split, TaskAttemptContext context)
+            throws IOException {
 
-    FileSystem fs = FileSystem.get(context.getConfiguration());
+        String cblPath = context.getConfiguration().get(
+                Const.COPYBOOK_INPUTFORMAT_CBL_HDFS_PATH_CONF);
 
-    BufferedInputStream inputStream = new BufferedInputStream(fs.open(new Path(
-        cblPath)));
+        FileSystem fs = FileSystem.get(context.getConfiguration());
 
-    CobolCopybookLoader copybookInt = new CobolCopybookLoader();
-    try {
-      externalRecord = copybookInt
-          .loadCopyBook(inputStream, "RR", CopybookLoader.SPLIT_NONE, 0,
-              "cp037", Convert.FMT_MAINFRAME, 0, null);
+        BufferedInputStream inputStream = new BufferedInputStream(fs.open(new Path(
+                cblPath)));
 
-      int fileStructure = Constants.IO_FIXED_LENGTH;
+        CobolCopybookLoader copybookInt = new CobolCopybookLoader();
+        try {
+            externalRecord = copybookInt
+                    .loadCopyBook(inputStream, "RR", CopybookLoader.SPLIT_NONE, 0,
+                            "cp037", Convert.FMT_MAINFRAME, 0, null);
 
-      for (ExternalField field : externalRecord.getRecordFields()) {
-        recordByteLength += field.getLen();
-      }
+            int fileStructure = Constants.IO_FIXED_LENGTH;
 
-      // jump to the point in the split that the first whole record of split
-      // starts at
-      FileSplit fileSplit = (FileSplit) split;
+            for (ExternalField field : externalRecord.getRecordFields()) {
+                recordByteLength += field.getLen();
+            }
 
-      start = fileSplit.getStart();
-      end = start + fileSplit.getLength();
-      final Path file = fileSplit.getPath();
+            // jump to the point in the split that the first whole record of split
+            // starts at
+            FileSplit fileSplit = (FileSplit) split;
 
-      BufferedInputStream fileIn = new BufferedInputStream(fs.open(fileSplit
-          .getPath()));
+            start = fileSplit.getStart();
+            end = start + fileSplit.getLength();
 
-      if (start != 0) {
-        pos = start - (start % recordByteLength) + recordByteLength;
+            BufferedInputStream fileIn = new BufferedInputStream(fs.open(fileSplit.getPath()));
 
-        fileIn.skip(pos);
-      }
+            if (start != 0) {
+                pos = start - (start % recordByteLength) + recordByteLength;
 
-      ret = LineIOProvider.getInstance().getLineReader(
-          fileStructure,
-          LineIOProvider.getInstance().getLineProvider(fileStructure));
+                fileIn.skip(pos);
+            }
 
-      ret.open(fileIn, externalRecord);
-    } catch (Exception e) {
-      throw new RuntimeException(e);
-    }
-  }
+            // ameet: 3/12/18 This signature has changed to not provide LineIOProvider
+            ret = LineIOProvider.getInstance().getLineReader(fileStructure);
 
-  @Override
-  public boolean nextKeyValue() throws IOException, InterruptedException {
-    if (pos > end) {
-      return false;
+            ret.open(fileIn, externalRecord);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    if (key == null) {
-      key = new LongWritable();
+    @Override
+    public boolean nextKeyValue() throws IOException {
+        if (pos > end) {
+            return false;
+        }
+
+        if (key == null) {
+            key = new LongWritable();
+        }
+        if (value == null) {
+            value = new Text();
+        }
+
+        AbstractLine line = ret.read();
+
+        if (line == null) {
+            return false;
+        }
+
+        pos += recordByteLength;
+
+        key.set(pos);
+
+        StringBuilder strBuilder = new StringBuilder();
+
+        boolean isFirst = true;
+        int i = 0;
+        for (ExternalField ignored : externalRecord.getRecordFields()) {
+            if (isFirst) {
+                isFirst = false;
+            } else {
+                strBuilder.append(fieldDelimiter);
+            }
+            strBuilder.append(line.getFieldValue(0, i++));
+        }
+
+        value.set(strBuilder.toString());
+        key.set(pos);
+
+        return true;
     }
-    if (value == null) {
-      value = new Text();
+
+    @Override
+    public LongWritable getCurrentKey() {
+        return key;
     }
 
-    AbstractLine line = ret.read();
+    @Override
+    public Text getCurrentValue() {
 
-    if (line == null) {
-      return false;
+        return value;
     }
 
-    pos += recordByteLength;
-
-    key.set(pos);
-
-    StringBuilder strBuilder = new StringBuilder();
-
-    boolean isFirst = true;
-    int i = 0;
-    for (ExternalField field : externalRecord.getRecordFields()) {
-      if (isFirst) {
-        isFirst = false;
-      } else {
-        strBuilder.append(fieldDelimiter);
-      }
-      strBuilder.append(line.getFieldValue(0, i++));
+    @Override
+    public float getProgress() {
+        if (start == end) {
+            return 0.0f;
+        } else {
+            return Math.min(1.0f, (pos - start) / (float) (end - start));
+        }
     }
 
-    value.set(strBuilder.toString());
-    key.set(pos);
-
-    return true;
-  }
-
-  @Override
-  public LongWritable getCurrentKey() throws IOException, InterruptedException {
-    return key;
-  }
-
-  @Override
-  public Text getCurrentValue() throws IOException, InterruptedException {
-
-    return value;
-  }
-
-  @Override
-  public float getProgress() throws IOException, InterruptedException {
-    if (start == end) {
-      return 0.0f;
-    } else {
-      return Math.min(1.0f, (pos - start) / (float) (end - start));
+    @Override
+    public void close() throws IOException {
+        ret.close();
     }
-  }
-
-  @Override
-  public void close() throws IOException {
-    ret.close();
-  }
 
 }
